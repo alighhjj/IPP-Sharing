@@ -2624,7 +2624,7 @@ dependencies = [
 
 [[package]]
 name = "ipp-sharing"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2636,7 +2636,7 @@ dependencies = [
 
 [[package]]
 name = "ipp-sharing-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "bimap",
@@ -2660,7 +2660,7 @@ dependencies = [
 
 [[package]]
 name = "ipp-sharing-gui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",

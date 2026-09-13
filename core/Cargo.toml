@@ -2,7 +2,7 @@
 authors = ["ArcticLampyrid <ArcticLampyrid@outlook.com>"]
 edition = "2021"
 name = "ipp-sharing-core"
-version = "0.1.0"
+version = "0.1.1"
 
 [features]
 default = ["pdfium"]
