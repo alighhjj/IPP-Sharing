@@ -246,8 +246,9 @@ jobs:
           - **Apple Bonjour is required.** The executables import \`dnssd.dll\`, which
             Windows resolves before startup, so without Bonjour every command fails
             with \`0xC0000135\` ("dnssd.dll was not found"). Bonjour ships with
-            [Bonjour Print Services](https://support.apple.com/106390) and cannot be
-            redistributed, so it is not included in these downloads.
+            [Bonjour Print Services](https://support.apple.com/kb/DL999) and cannot be
+            redistributed, so it is not included in these downloads. The setup
+            executable offers to download and install it for you.
           - Installers are only code-signed when signing secrets are configured.
           EOF
 

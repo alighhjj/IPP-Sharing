@@ -103,7 +103,7 @@ $sha = if ($ShortSha) { $ShortSha } else { "unknown" }
     "  The executables import dnssd.dll, which ships with Bonjour and cannot be"
     "  redistributed. Windows resolves it before startup, so without Bonjour"
     "  every command fails with 0xC0000135 (STATUS_DLL_NOT_FOUND)."
-    "  Install Bonjour Print Services: https://support.apple.com/106390"
+    "  Install Bonjour Print Services: https://support.apple.com/kb/DL999"
 ) | Out-File -Encoding utf8 (Join-Path $stage "BUILD-INFO.txt")
 
 # --- portable zip -------------------------------------------------------------
