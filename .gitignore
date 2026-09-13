@@ -1,0 +1,6 @@
+/target
+test_outputs
+
+# Build outputs from .github/scripts/build-installer.ps1 and the CI workflows.
+/build
+/dist

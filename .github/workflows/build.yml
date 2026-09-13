@@ -1,0 +1,128 @@
+name: Build
+
+on:
+  push:
+    branches: ["main", "master"]
+    paths-ignore:
+      - "**/*.md"
+      - "LICENSE.md"
+      - ".gitignore"
+  pull_request:
+    branches: ["main", "master"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Fast feedback: formatting, lints and compile-checked tests on Linux.
+  #
+  # This crate is Windows-only (winprint pulls in the Win32 printing APIs), so
+  # it cannot be built for x86_64-unknown-linux-gnu at all. Everything here is
+  # therefore run against a Windows target — `cargo test --no-run` catches
+  # compile errors in the test code without needing a Windows machine to do it.
+  lint:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: lint
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets --locked --target x86_64-pc-windows-msvc -- -D warnings
+
+      - name: Compile tests
+        run: cargo test --workspace --no-run --locked --target x86_64-pc-windows-msvc
+
+      - name: Check the shipped example config deserializes
+        run: cargo test --workspace --locked --target x86_64-pc-windows-msvc -- --list
+
+  build:
+    name: Build (${{ matrix.arch }})
+    needs: lint
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86_64-pc-windows-msvc
+          - arch: x86
+            target: i686-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets --locked --target ${{ matrix.target }} -- -D warnings
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }} --workspace
+        env:
+          RUSTFLAGS: "-C target-feature=+crt-static"
+
+      - name: Smoke test (CLI --version)
+        shell: pwsh
+        run: |
+          $exe = "target/${{ matrix.target }}/release/ipp-sharing.exe"
+          $version = & $exe --version
+          if ($LASTEXITCODE -ne 0) { throw "CLI exited with $LASTEXITCODE" }
+          Write-Host "OK: $version"
+
+      - name: Stage artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $out = "dist/${{ matrix.arch }}"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+
+          $release = "target/${{ matrix.target }}/release"
+          Copy-Item "$release/ipp-sharing-gui.exe" $out
+          Copy-Item "$release/ipp-sharing.exe"     $out
+          Copy-Item "README.md"                    $out
+          Copy-Item "LICENSE.md"                   $out
+          Copy-Item "config.example.yaml"          $out
+
+          # Record the exact commit so a downloaded bundle can be traced back.
+          "${{ github.sha }}" | Out-File -Encoding ascii -NoNewline "$out/COMMIT.txt"
+
+          Get-ChildItem $out | Select-Object Name, Length
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipp-sharing-${{ matrix.arch }}-windows
+          path: dist/${{ matrix.arch }}/
+          if-no-files-found: error
+          retention-days: 14

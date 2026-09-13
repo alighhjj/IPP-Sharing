@@ -1,0 +1,233 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v0.1.0). Must already exist."
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # A release must never be cut from code that does not pass the checks.
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Resolve release metadata
+        id: meta
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          # Strip a leading "v" so v0.1.0 -> 0.1.0
+          VERSION="${TAG#v}"
+          echo "tag=$TAG"         >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing $TAG (version $VERSION)"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-verify
+
+      - name: Verify tag matches Cargo.toml versions
+        run: |
+          set -euo pipefail
+          EXPECTED="${{ steps.meta.outputs.version }}"
+          for crate in cli core gui; do
+            ACTUAL=$(grep -m1 '^version' "$crate/Cargo.toml" | sed -E 's/.*"(.*)".*/\1/')
+            if [ "$ACTUAL" != "$EXPECTED" ]; then
+              echo "::error file=$crate/Cargo.toml::version is $ACTUAL but tag implies $EXPECTED"
+              exit 1
+            fi
+          done
+          echo "All crate versions match $EXPECTED"
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      # Targets Windows because the crate cannot build for Linux (see build.yml).
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets --locked --target x86_64-pc-windows-msvc -- -D warnings
+
+      - name: Compile tests
+        run: cargo test --workspace --no-run --locked --target x86_64-pc-windows-msvc
+
+  build:
+    name: Build (${{ matrix.arch }})
+    needs: verify
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86_64-pc-windows-msvc
+          - arch: x86
+            target: i686-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify.outputs.tag }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Inno Setup
+        # ghcr.io Windows runners do not ship Inno Setup, and without it the
+        # packaging script silently falls back to the portable zip only.
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (Test-Path $iscc) {
+            Write-Host "Inno Setup already present: $iscc"
+            exit 0
+          }
+          choco install innosetup --no-progress -y
+          if (-not (Test-Path $iscc)) { throw "Inno Setup installation failed" }
+          Write-Host "Installed: $iscc"
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Compute short SHA
+        id: sha
+        shell: pwsh
+        run: 'echo "short=$("${{ github.sha }}".Substring(0,7))" >> $env:GITHUB_OUTPUT'
+
+      - name: Build release binaries
+        run: cargo build --release --locked --target ${{ matrix.target }} --workspace
+        env:
+          RUSTFLAGS: "-C target-feature=+crt-static"
+
+      - name: Build Windows installer
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          SHORT_SHA: ${{ steps.sha.outputs.short }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          # Absolute paths: Inno Setup resolves relative OutputDir against the
+          # generated .iss location, not the working directory.
+          $outDir = Join-Path $PWD "dist/${{ matrix.arch }}"
+          ./.github/scripts/build-installer.ps1 `
+            -Target $env:TARGET `
+            -Version $env:VERSION `
+            -ShortSha $env:SHORT_SHA `
+            -OutputDir $outDir
+
+      - name: Upload release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.arch }}
+          path: dist/${{ matrix.arch }}/*
+          if-no-files-found: error
+          retention-days: 5
+
+  publish:
+    name: Publish GitHub Release
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List release assets
+        run: ls -lhR artifacts
+
+      - name: Generate SHA-256 checksums
+        working-directory: artifacts
+        run: |
+          set -euo pipefail
+          # Written to a temp file first: redirecting straight into
+          # SHA256SUMS.txt would create it before find runs, and the manifest
+          # would then try to checksum itself.
+          find . -maxdepth 1 -type f -printf '%f\n' | sort \
+            | xargs -r sha256sum > /tmp/SHA256SUMS.txt
+          mv /tmp/SHA256SUMS.txt SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          # Fail the release rather than publish a manifest that does not verify.
+          sha256sum -c SHA256SUMS.txt
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.verify.outputs.tag }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          cat > release-notes.md <<EOF
+          ## IPP Sharing ${VERSION}
+
+          Driverless IPP printer sharing for Windows 10 and later.
+
+          ### Downloads
+
+          | File | Architecture | Description |
+          | --- | --- | --- |
+          | \`IPP-Sharing-${VERSION}-x86_64-setup.exe\` | x86_64 | Installer (recommended) |
+          | \`IPP-Sharing-${VERSION}-x86_64.zip\` | x86_64 | Portable bundle |
+          | \`IPP-Sharing-${VERSION}-x86-setup.exe\` | x86 | Installer, 32-bit |
+          | \`IPP-Sharing-${VERSION}-x86.zip\` | x86 | Portable bundle, 32-bit |
+
+          Verify your download against \`SHA256SUMS.txt\`.
+
+          ### Notes
+
+          - Both bundles ship the GUI (\`ipp-sharing-gui.exe\`) and the CLI (\`ipp-sharing.exe\`).
+          - A \`config.yaml\` next to the executable is required; see the README.
+          - Bonjour is needed for automatic printer discovery.
+          - Installers are only code-signed when signing secrets are configured.
+          EOF
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists, updating assets."
+            gh release upload "$TAG" artifacts/* --clobber
+            gh release edit "$TAG" --notes-file release-notes.md
+          else
+            gh release create "$TAG" artifacts/* \
+              --title "IPP Sharing ${VERSION}" \
+              --notes-file release-notes.md \
+              --verify-tag
+          fi

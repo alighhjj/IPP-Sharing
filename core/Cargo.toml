@@ -1,0 +1,37 @@
+[package]
+authors = ["ArcticLampyrid <ArcticLampyrid@outlook.com>"]
+edition = "2021"
+name = "ipp-sharing-core"
+version = "0.1.0"
+
+[features]
+default = ["pdfium"]
+winpdf = []
+pdfium = ["winprint/pdfium"]
+
+[dependencies]
+anyhow = "1.0"
+bimap = "0.6"
+futures = "0.3"
+gethostname = "1"
+hyper = "1.10"
+ipp = { version = "6", features = ["async"], default-features = false }
+ippper = { version = "0.6", default-features = false, features = [
+    "server",
+    "server-tls",
+    "rustls-ring",
+] }
+tokio = { version = "1", features = ["fs", "sync"], default-features = false }
+tokio-util = { version = "0.7", features = ["io", "compat"] }
+uuid = { version = "1.23", features = ["v4", "serde"] }
+winprint = { version = "0.2", default-features = false }
+zeroconf = "0.18.0"
+blocking = "1.6"
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml_ng = "0.10"
+log = "0.4"
+print_raster = "0.1"
+tiff = "0.11"
+
+[dev-dependencies]
+serde_yaml_ng = "0.10"
