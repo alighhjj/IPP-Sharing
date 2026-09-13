@@ -68,6 +68,113 @@ function Get-DnssdDll {
     return $null
 }
 
+function Get-PeImportedDll {
+    <#
+    .SYNOPSIS
+        Reads the names of the DLLs a PE file imports, without external tools.
+    .DESCRIPTION
+        dumpbin would do this, but it is not on PATH on a GitHub runner unless
+        the MSVC environment is initialised with vcvarsall/Enter-VsDevShell.
+        Parsing the import directory directly avoids that dependency entirely.
+    #>
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    $names = New-Object System.Collections.Generic.List[string]
+
+    # --- DOS header -> e_lfanew (offset 0x3C) ---
+    if ($bytes.Length -lt 0x40 -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
+        throw "Not a PE file: $Path"
+    }
+    $peOffset = [System.BitConverter]::ToInt32($bytes, 0x3C)
+    if ([System.BitConverter]::ToUInt32($bytes, $peOffset) -ne 0x00004550) {
+        throw "Missing PE signature: $Path"
+    }
+
+    # --- COFF header: machine, section count, optional header size ---
+    $coff = $peOffset + 4
+    $sectionCount = [System.BitConverter]::ToUInt16($bytes, $coff + 2)
+    $optionalSize = [System.BitConverter]::ToUInt16($bytes, $coff + 16)
+    $optional = $coff + 20
+
+    # PE32+ (0x20B) vs PE32 (0x10B) shifts the data directory base by 16 bytes.
+    $magic = [System.BitConverter]::ToUInt16($bytes, $optional)
+    $dataDirBase = if ($magic -eq 0x20B) { $optional + 112 } else { $optional + 96 }
+
+    # Data directory entry 1 is the import table (RVA + size).
+    $importRva = [System.BitConverter]::ToUInt32($bytes, $dataDirBase + 8)
+    if ($importRva -eq 0) { return $names }   # nothing imported
+
+    # --- map RVA -> file offset via the section table ---
+    $sections = $optional + $optionalSize
+    $rvaToOffset = $null
+    for ($i = 0; $i -lt $sectionCount; $i++) {
+        $s = $sections + ($i * 40)
+        $virtualSize = [System.BitConverter]::ToUInt32($bytes, $s + 8)
+        $virtualAddr = [System.BitConverter]::ToUInt32($bytes, $s + 12)
+        $rawSize     = [System.BitConverter]::ToUInt32($bytes, $s + 16)
+        $rawPtr      = [System.BitConverter]::ToUInt32($bytes, $s + 20)
+        $span = [Math]::Max($virtualSize, $rawSize)
+        if ($importRva -ge $virtualAddr -and $importRva -lt ($virtualAddr + $span)) {
+            $rvaToOffset = $rawPtr + ($importRva - $virtualAddr)
+            break
+        }
+    }
+    if ($null -eq $rvaToOffset) { throw "Could not map import RVA to a file offset: $Path" }
+
+    # --- walk IMAGE_IMPORT_DESCRIPTOR entries (20 bytes each, 0-terminated) ---
+    $cursor = $rvaToOffset
+    while ($true) {
+        $nameRva = [System.BitConverter]::ToUInt32($bytes, $cursor + 12)
+        $firstThunk = [System.BitConverter]::ToUInt32($bytes, $cursor + 16)
+        if ($nameRva -eq 0 -and $firstThunk -eq 0) { break }
+
+        # Translate this descriptor's name RVA the same way.
+        $nameOffset = $null
+        for ($i = 0; $i -lt $sectionCount; $i++) {
+            $s = $sections + ($i * 40)
+            $virtualSize = [System.BitConverter]::ToUInt32($bytes, $s + 8)
+            $virtualAddr = [System.BitConverter]::ToUInt32($bytes, $s + 12)
+            $rawSize     = [System.BitConverter]::ToUInt32($bytes, $s + 16)
+            $rawPtr      = [System.BitConverter]::ToUInt32($bytes, $s + 20)
+            $span = [Math]::Max($virtualSize, $rawSize)
+            if ($nameRva -ge $virtualAddr -and $nameRva -lt ($virtualAddr + $span)) {
+                $nameOffset = $rawPtr + ($nameRva - $virtualAddr)
+                break
+            }
+        }
+        if ($null -ne $nameOffset) {
+            $end = $nameOffset
+            while ($end -lt $bytes.Length -and $bytes[$end] -ne 0) { $end++ }
+            $names.Add([System.Text.Encoding]::ASCII.GetString($bytes, $nameOffset, $end - $nameOffset))
+        }
+
+        $cursor += 20
+        if ($cursor + 20 -gt $bytes.Length) { break }
+    }
+
+    return $names
+}
+
+function Test-PeImportsDll {
+    <#
+    .SYNOPSIS
+        True when a PE file's import table references the given DLL name.
+    .DESCRIPTION
+        Matching is case-insensitive: import names are stored as written by the
+        linker, so a binary may record ADVAPI32.dll while we ask for
+        advapi32.dll.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$DllName
+    )
+    foreach ($imported in (Get-PeImportedDll -Path $Path)) {
+        if ($imported -and $imported.Trim() -ieq $DllName) { return $true }
+    }
+    return $false
+}
+
 function Copy-NativeDependencies {
     <#
     .SYNOPSIS

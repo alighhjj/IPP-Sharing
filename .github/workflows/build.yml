@@ -136,23 +136,15 @@ jobs:
           # loader would abort the process with STATUS_DLL_NOT_FOUND — exactly
           # the same code a genuinely broken build produces. Probe the import
           # table instead of launching, so a missing runtime cannot be mistaken
-          # for a packaging defect.
+          # for a packaging defect. (dumpbin is not on PATH unless the MSVC
+          # environment is initialised, so the import table is parsed directly.)
           $exe = Join-Path $release "ipp-sharing.exe"
           if (-not (Test-Path $exe)) { throw "Missing $exe" }
 
-          $dnssdImported = $false
-          try {
-            # dumpbin ships with the MSVC toolchain already on the runner.
-            $dump = & dumpbin /imports $exe 2>$null | Out-String
-            $dnssdImported = $dump -match 'dnssd\.dll'
-          } catch {
-            Write-Warning "dumpbin unavailable; falling back to the launch check."
-          }
-
-          if ($dnssdImported -and -not $deps.DnssdAvailable) {
+          if ((Test-PeImportsDll -Path $exe -DllName "dnssd.dll") -and -not $deps.DnssdAvailable) {
             Write-Host "Skipping launch test: $exe imports dnssd.dll (Apple Bonjour),"
             Write-Host "which is not redistributable and is not present on this runner."
-            Write-Host "Verified instead: binary exists and its import table is well-formed."
+            Write-Host "Verified instead: binary exists with a well-formed import table."
           }
           else {
             $version = & $exe --version
