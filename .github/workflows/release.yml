@@ -95,6 +95,8 @@ jobs:
 
       - name: Compile tests
         run: cargo test --workspace --no-run --locked --target x86_64-pc-windows-gnu
+        # Compile-only: this runner cannot execute them. The `build` job runs
+        # the suite on Windows, and the release is gated on it.
 
   build:
     name: Build (${{ matrix.arch }})
@@ -144,6 +146,14 @@ jobs:
 
       - name: Build release binaries
         run: cargo build --release --locked --target ${{ matrix.target }} --workspace
+        env:
+          RUSTFLAGS: "-C target-feature=+crt-static"
+
+      # Gate the release on the suite passing. The `verify` job can only
+      # compile the tests (Linux cannot run a Windows PE test binary), so this
+      # is the first point at which they genuinely execute.
+      - name: Run tests
+        run: cargo test --release --workspace --locked --target ${{ matrix.target }}
         env:
           RUSTFLAGS: "-C target-feature=+crt-static"
 

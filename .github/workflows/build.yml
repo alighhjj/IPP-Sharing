@@ -73,6 +73,8 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked --target $TARGET -- -D warnings
 
       - name: Compile tests
+        # Compile-only: this runner cannot execute them (see the `build` job,
+        # which runs the suite on Windows where the binaries can actually run).
         run: cargo test --workspace --no-run --locked --target $TARGET
 
   build:
@@ -106,6 +108,13 @@ jobs:
 
       - name: Run clippy
         run: cargo clippy --workspace --all-targets --locked --target ${{ matrix.target }} -- -D warnings
+
+      # This job runs on Windows, so the tests can actually execute here.
+      # The `lint` job above only *compiles* them: they link winprint, which
+      # pulls in the WinRT Windows.Data.Pdf component, so a Windows PE test
+      # binary cannot run on the Linux runner.
+      - name: Run tests
+        run: cargo test --workspace --locked --target ${{ matrix.target }}
 
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }} --workspace

@@ -9,6 +9,13 @@ updates:
       cargo-minor-patch:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+    ignore:
+      # ippper pins this to ipp 6, and there is no ippper release that accepts
+      # 7 — including on its master branch. A major bump here leaves the
+      # dependency graph unresolvable, so Dependabot re-proposing it just
+      # produces a PR that cannot merge. Remove once ippper supports ipp 7.
+      - dependency-name: "ipp"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: "/"
