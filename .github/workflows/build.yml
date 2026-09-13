@@ -116,7 +116,10 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          ./.github/scripts/native-deps.ps1
+          # The leading ". " is required: without the dot-source operator the
+          # script runs in a child scope and its functions are discarded, which
+          # presents as "term not recognized" on the next line.
+          . "$PWD/.github/scripts/native-deps.ps1"
 
           $release = "target/${{ matrix.target }}/release"
 

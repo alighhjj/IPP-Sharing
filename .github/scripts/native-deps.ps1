@@ -18,11 +18,14 @@
 # Services) and is not redistributable, so there is nothing to copy: we locate
 # an installed copy for local test runs and otherwise tell the user to install
 # Bonjour. `Get-NativeDependencyReport` makes that requirement explicit.
-
-Set-StrictMode -Version Latest
+#
+# Deliberately NO `Set-StrictMode` here: this file is dot-sourced, so such a
+# call would leak into the caller's scope and change its behaviour (and on
+# `-Version Latest` makes .NET method overload resolution fail). Callers that
+# want strict mode set it themselves.
 
 # The raw-dylib import means the loader needs this file present at startup.
-$script:DnssdName = "dnssd.dll"
+$DnssdName = "dnssd.dll"
 
 function Get-PdfiumDll {
     <#
