@@ -6,7 +6,7 @@ This is a Windows-only tool, of course. For Linux and macOS users, CUPS (Common 
 ## Features
 - **Lightweight and Easy to Use**: Designed for simplicity and quick setup.
 - **Basic Print Ticket Support**: Includes standard media size, orientation, duplex printing, and color mode.
-- **Apple AirPrint Compatibility**: Seamlessly integrates with Apple AirPrint for easy printing from Apple devices.
+- **Apple AirPrint Compatibility**: Prints from iPhone, iPad and Mac without an app or driver. Requires Bonjour to be enabled and a printer that can print the jobs AirPrint sends — see [AirPrint](#airprint).
 - **Driver-Free Client Setup**: No driver installation or PPD files required on the client side.
 - **DNS-SD (Bonjour) Support**: Enables automatic service discovery for printers.
 - **Two Frontends**: A tray-style GUI for everyday use and a CLI for scripting or headless setups.
@@ -97,6 +97,56 @@ netsh advfirewall firewall add rule name="IPP Sharing (Bonjour)" dir=in action=a
 > If port 631 is already taken (Windows' own print stack sometimes holds it),
 > change `server.addr` in `config.yaml` to another port such as 1631 and open
 > that port instead.
+
+## AirPrint
+
+AirPrint is discovery plus IPP, so there is no separate switch: enable `dnssd`
+for the printer and it is advertised to Apple devices as well. Two things decide
+whether it actually works, and iOS reports neither of them.
+
+**The service must carry the `_universal` subtype.** iOS browses
+`_universal._sub._ipp._tcp` when it builds the printer list, not the plain
+`_ipp._tcp` type. A printer reachable over IPP but registered without that
+subtype is simply absent from the list — the iOS print sheet offers no "add
+manually" fallback and shows no error.
+
+**The TXT record must contain a non-empty `URF` key.** `URF` (Apple's Unified
+Raster Format) is what tells iOS the printer speaks its raster language, and iOS
+checks this key before listing anything. Listing `image/urf` inside the `pdl`
+key is *not* a substitute — `pdl` says which formats are accepted, whereas `URF`
+says which format this service can actually rasterise to. A record missing `URF`
+produces the same silent, printerless print sheet.
+
+Both are emitted automatically. The `URF` value is built from the real Windows
+print capabilities (colour support, supported resolutions, duplex) and is the
+same string served in the IPP `urf-supported` attribute, so the two can never
+disagree.
+
+### What iOS sends, and what has to work
+
+When you pick the printer, iOS requests the printer's attributes and then sends
+the document in whichever format it prefers — normally `image/urf`. That means
+the job is rasterised to Apple Raster and then converted back to a TIFF for the
+Windows spooler, which is a lossy round trip at the requested resolution.
+
+If the build has PDF support (the default), list `application/pdf` first in
+`pdl`: iOS then sends the original PDF instead, and the document keeps its text
+and vector content.
+
+### Checking discovery from a machine on the same network
+
+```shell
+# The AirPrint-specific subtype. If this is empty, iOS will never see the printer.
+avahi-browse --terminate _universal._sub._ipp._tcp
+
+# The full advertisement, including the URF key.
+avahi-browse --terminate --resolve _ipp._tcp
+```
+
+On Windows, the Bonjour Printer Wizard shows the same records. That the wizard
+finds the printer only proves the `_ipp._tcp` announcement reaches the network —
+confirm the `_universal` subtype and `URF` are present rather than stopping
+there.
 
 ### GUI window closes immediately / stays blank
 

@@ -1,3 +1,4 @@
+use crate::airprint::urf_capabilities;
 use crate::attr::ipp_sys_predefined_map::IppSysPredefinedMap;
 use crate::attr::media_name::CommonMediaNameMap;
 use crate::attr::media_size::media_size_sys_to_ipp;
@@ -133,32 +134,15 @@ impl MyIppService {
             info.printer_resolution_supported(resolution_supported.clone());
         }
 
-        info.urf_supported({
-            let mut r: Vec<IppKeyword> =
-                vec!["V1.4".try_into()?, "CP1".try_into()?, "W8".try_into()?];
-            if color {
-                r.push("SRGB24".try_into()?);
-            }
-            let mut urf_resolution = resolution_supported
-                .iter()
-                .map(|x| x.cross_feed.max(x.feed))
-                .collect::<Vec<_>>();
-            urf_resolution.sort_unstable();
-            urf_resolution.dedup();
-            r.push(
-                format!(
-                    "RS{}",
-                    urf_resolution
-                        .into_iter()
-                        .map(|x| x.to_string())
-                        .collect::<Vec<_>>()
-                        .join("-")
-                )
-                .try_into()?,
-            );
-            r.push("DM1".try_into()?);
-            r
-        });
+        // Shared with the Bonjour TXT record: `urf-supported` here and the
+        // `URF` TXT key iOS requires must agree, so both come from the same
+        // builder in `airprint`.
+        let urf = urf_capabilities(&capabilities, color);
+        info.urf_supported(
+            urf.split(',')
+                .map(|part| part.to_owned().try_into())
+                .collect::<Result<Vec<IppKeyword>, _>>()?,
+        );
 
         info.pwg_raster_document_resolution_supported(resolution_supported);
         info.pwg_raster_document_sheet_back(Some("normal".try_into()?));
@@ -172,7 +156,8 @@ impl MyIppService {
 
         let info = info.build()?;
 
-        let mut ipp_service = SimpleIppService::new(info, MyHandler::new(device, capabilities));
+        let mut ipp_service =
+            SimpleIppService::new(info, MyHandler::new(device, capabilities.clone()));
         let port = match &server_config.addr {
             OneOrMany::One(addr) => addr.port(),
             OneOrMany::Many(addrs) => addrs.first().map_or(631, |addr| addr.port()),
@@ -185,9 +170,12 @@ impl MyIppService {
         ipp_service.set_basepath(device_config.basepath.as_str());
 
         if device_config.dnssd {
-            serve_dnssd(device_config, port, "ipp");
+            // `capabilities` is moved into the first call; the second one (the
+            // TLS variant) only needs the same derived values, which are cheap
+            // to recompute, so clone rather than thread a reference through.
+            serve_dnssd(device_config, port, "ipp", capabilities.clone());
             if server_config.tls.is_some() {
-                serve_dnssd(device_config, port, "ipps");
+                serve_dnssd(device_config, port, "ipps", capabilities.clone());
             }
         }
 

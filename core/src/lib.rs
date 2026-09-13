@@ -9,6 +9,7 @@ use log::{error, info};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::fs;
+pub mod airprint;
 mod attr;
 pub mod config;
 mod dnssd;
@@ -53,6 +54,7 @@ pub async fn ipp_sharing(config: &ConfigRoot) -> anyhow::Result<()> {
             }
             for ipp_service in ipp_services {
                 if ipp_service.matches(path) {
+                    let req = with_ipp_uri_scheme(req);
                     return handle_ipp_via_http(req, ipp_service.inner.as_ref()).await;
                 }
             }
@@ -100,4 +102,44 @@ pub async fn ipp_sharing(config: &ConfigRoot) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Normalises the request URI's scheme to the IPP equivalent.
+///
+/// `ippper` derives `printer-uri-supported` from the scheme of the URI the
+/// request arrived on, falling back to `ipp` when there is none. Hyper hands us
+/// origin-form URIs (just the path) for a normal connection, so the fallback
+/// applies and the attribute is already correct. This only matters for clients
+/// that send an absolute-form URI, where the scheme would otherwise be leaked
+/// verbatim as `http://`/`https://` — schemes that IPP clients reject outright
+/// instead of normalising.
+///
+/// Only the scheme is touched; path and query are preserved.
+pub fn with_ipp_uri_scheme<B>(req: hyper::Request<B>) -> hyper::Request<B> {
+    let (mut parts, body) = req.into_parts();
+    with_ipp_uri_scheme_parts(&mut parts);
+    hyper::Request::from_parts(parts, body)
+}
+
+/// The body-agnostic half of [`with_ipp_uri_scheme`], so the rewrite can also be
+/// applied to the `Parts` a service receives after the body has been split off.
+pub fn with_ipp_uri_scheme_parts(parts: &mut hyper::http::request::Parts) {
+    // Nothing to do for the common origin-form case, which has no scheme.
+    let scheme = match parts.uri.scheme_str() {
+        Some("https") => "ipps",
+        Some("http") => "ipp",
+        // Already an IPP scheme, or absent entirely.
+        _ => return,
+    };
+
+    if let Some(rest) = parts
+        .uri
+        .to_string()
+        .split_once("://")
+        .map(|(_, rest)| rest.to_owned())
+    {
+        if let Ok(uri) = format!("{scheme}://{rest}").parse::<hyper::Uri>() {
+            parts.uri = uri;
+        }
+    }
 }
