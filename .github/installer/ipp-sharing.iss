@@ -61,6 +61,10 @@ Source: "@STAGE_DIR@\ipp-sharing.exe";     DestDir: "{app}"; Flags: ignoreversio
 Source: "@STAGE_DIR@\README.md";           DestDir: "{app}"; Flags: ignoreversion
 Source: "@STAGE_DIR@\LICENSE.md";          DestDir: "{app}"; Flags: ignoreversion
 Source: "@STAGE_DIR@\BUILD-INFO.txt";      DestDir: "{app}"; Flags: ignoreversion
+; PDFium is a runtime dependency of the pdfium feature; without it the
+; executables fail to start. skipifsourcedoesntexist keeps this working for
+; builds made with the winpdf feature instead.
+Source: "@STAGE_DIR@\pdfium.dll";          DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 ; Only install a config if the user does not already have one, so upgrades and
 ; reinstalls never clobber their settings.

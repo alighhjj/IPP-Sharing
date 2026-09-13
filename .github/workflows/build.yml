@@ -115,29 +115,36 @@ jobs:
       - name: Smoke test (CLI --version)
         shell: pwsh
         run: |
-          $exe = "target/${{ matrix.target }}/release/ipp-sharing.exe"
-          $version = & $exe --version
+          $ErrorActionPreference = "Stop"
+          $release = "target/${{ matrix.target }}/release"
+
+          # pdfium.dll is a runtime dependency of the pdfium feature and lives
+          # in a build-script OUT_DIR; copy it next to the binaries before
+          # running them, otherwise the process dies with STATUS_DLL_NOT_FOUND.
+          $pdfium = Get-ChildItem "$release/build" -Recurse -Filter pdfium.dll -File -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if ($pdfium) {
+            Copy-Item $pdfium.FullName $release -Force
+          } else {
+            Write-Warning "pdfium.dll not found; relying on winpdf feature"
+          }
+
+          $version = & "$release/ipp-sharing.exe" --version
           if ($LASTEXITCODE -ne 0) { throw "CLI exited with $LASTEXITCODE" }
           Write-Host "OK: $version"
 
       - name: Stage artifacts
         shell: pwsh
+        # Reuses the release packaging script so the workflow preview and the
+        # published release always contain exactly the same file set.
         run: |
           $ErrorActionPreference = "Stop"
-          $out = "dist/${{ matrix.arch }}"
-          New-Item -ItemType Directory -Force -Path $out | Out-Null
-
-          $release = "target/${{ matrix.target }}/release"
-          Copy-Item "$release/ipp-sharing-gui.exe" $out
-          Copy-Item "$release/ipp-sharing.exe"     $out
-          Copy-Item "README.md"                    $out
-          Copy-Item "LICENSE.md"                   $out
-          Copy-Item "config.example.yaml"          $out
-
-          # Record the exact commit so a downloaded bundle can be traced back.
-          "${{ github.sha }}" | Out-File -Encoding ascii -NoNewline "$out/COMMIT.txt"
-
-          Get-ChildItem $out | Select-Object Name, Length
+          ./.github/scripts/build-installer.ps1 `
+            -Target ${{ matrix.target }} `
+            -Version "0.0.0-ci" `
+            -ShortSha "$("${{ github.sha }}".Substring(0,7))" `
+            -SkipInstaller `
+            -OutputDir (Join-Path $PWD "dist/${{ matrix.arch }}")
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

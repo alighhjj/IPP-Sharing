@@ -13,7 +13,10 @@ param(
     [Parameter(Mandatory = $true)][string]$Target,
     [Parameter(Mandatory = $true)][string]$Version,
     [Parameter(Mandatory = $true)][string]$OutputDir,
-    [string]$ShortSha = ""
+    [string]$ShortSha = "",
+    # Lets the PR/preview workflow reuse this script for staging without paying
+    # the Inno Setup compile every run.
+    [switch]$SkipInstaller
 )
 
 $ErrorActionPreference = "Stop"
@@ -60,6 +63,22 @@ foreach ($exe in @("ipp-sharing-gui.exe", "ipp-sharing.exe")) {
     Write-Host ("  + {0} ({1:N1} MB)" -f $exe, ((Get-Item $src).Length / 1MB))
 }
 
+# PDFium is linked as a dynamic library by winprint's `pdfium` feature, so the
+# executables fail to start with STATUS_DLL_NOT_FOUND unless pdfium.dll sits
+# next to them. Cargo drops it in the build script's OUT_DIR, whose path
+# contains a moving hash and version — hence the wildcard search.
+$pdfium = Get-ChildItem -Path (Join-Path $releaseDir "build") -Recurse `
+    -Filter "pdfium.dll" -File -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+if ($pdfium) {
+    Copy-Item $pdfium.FullName $stage
+    Write-Host ("  + pdfium.dll ({0:N1} MB)" -f ($pdfium.Length / 1MB))
+} else {
+    # Warn rather than fail: a build with --no-default-features --features
+    # winpdf does not need it.
+    Write-Warning "pdfium.dll not found under $releaseDir\build — PDF printing will not work in this bundle."
+}
+
 Copy-Item (Join-Path $repoRoot "README.md") $stage
 Copy-Item (Join-Path $repoRoot "LICENSE.md") $stage
 
@@ -78,6 +97,13 @@ Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zipPath -Compres
 Write-Host "Portable bundle: $zipPath" -ForegroundColor Green
 
 # --- installer ----------------------------------------------------------------
+if ($SkipInstaller) {
+    Write-Host "Skipping installer generation (-SkipInstaller)." -ForegroundColor Yellow
+    Write-Host "Artifacts in ${outPath}:" -ForegroundColor Green
+    Get-ChildItem $outPath | Select-Object Name, Length
+    return
+}
+
 $iscc = $null
 foreach ($candidate in @(
         "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
