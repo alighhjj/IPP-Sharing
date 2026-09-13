@@ -20,23 +20,46 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Fast feedback: formatting, lints and compile-checked tests on Linux.
+  # Fast feedback: formatting, lints and compile-checked tests, without waiting
+  # for a Windows runner.
   #
   # This crate is Windows-only (winprint pulls in the Win32 printing APIs), so
-  # it cannot be built for x86_64-unknown-linux-gnu at all. Everything here is
-  # therefore run against a Windows target — `cargo test --no-run` catches
-  # compile errors in the test code without needing a Windows machine to do it.
+  # it cannot be built for a Linux target at all. The checks below therefore
+  # target x86_64-pc-windows-gnu rather than the MSVC target: `ring`, pulled in
+  # via rustls for IPP-over-TLS, compiles C code at build time and needs
+  # lib.exe, which only exists in the MSVC toolchain on Windows. The GNU target
+  # uses mingw-w64, which is installable here — so this job stays fast and the
+  # actual MSVC build happens on windows-latest below.
   lint:
     name: Lint & Test
     runs-on: ubuntu-latest
+    env:
+      TARGET: x86_64-pc-windows-gnu
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-pc-windows-msvc
+          targets: x86_64-pc-windows-gnu
           components: rustfmt, clippy
+
+      - name: Install mingw-w64
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64
+
+      - name: Configure the cross linker
+        # Appended rather than committed to .cargo/config.toml so that the
+        # real MSVC build on Windows is unaffected.
+        run: |
+          cat >> .cargo/config.toml <<'EOF'
+
+          [target.x86_64-pc-windows-gnu]
+          linker = "x86_64-w64-mingw32-gcc"
+          ar = "x86_64-w64-mingw32-ar"
+          EOF
 
       - name: Cache cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
@@ -47,13 +70,10 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run clippy
-        run: cargo clippy --workspace --all-targets --locked --target x86_64-pc-windows-msvc -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked --target $TARGET -- -D warnings
 
       - name: Compile tests
-        run: cargo test --workspace --no-run --locked --target x86_64-pc-windows-msvc
-
-      - name: Check the shipped example config deserializes
-        run: cargo test --workspace --locked --target x86_64-pc-windows-msvc -- --list
+        run: cargo test --workspace --no-run --locked --target $TARGET
 
   build:
     name: Build (${{ matrix.arch }})

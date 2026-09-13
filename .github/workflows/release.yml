@@ -49,8 +49,23 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-pc-windows-msvc
+          targets: x86_64-pc-windows-gnu
           components: rustfmt, clippy
+
+      - name: Install mingw-w64
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64
+
+      - name: Configure the cross linker
+        run: |
+          cat >> .cargo/config.toml <<'EOF'
+
+          [target.x86_64-pc-windows-gnu]
+          linker = "x86_64-w64-mingw32-gcc"
+          ar = "x86_64-w64-mingw32-ar"
+          EOF
 
       - name: Cache cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
@@ -73,12 +88,13 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      # Targets Windows because the crate cannot build for Linux (see build.yml).
+      # Uses the GNU target here for the same reason as build.yml: `ring` needs
+      # a C toolchain, and only mingw-w64 is available on this Linux runner.
       - name: Run clippy
-        run: cargo clippy --workspace --all-targets --locked --target x86_64-pc-windows-msvc -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked --target x86_64-pc-windows-gnu -- -D warnings
 
       - name: Compile tests
-        run: cargo test --workspace --no-run --locked --target x86_64-pc-windows-msvc
+        run: cargo test --workspace --no-run --locked --target x86_64-pc-windows-gnu
 
   build:
     name: Build (${{ matrix.arch }})
