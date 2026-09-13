@@ -100,20 +100,39 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 Type: filesandordirs; Name: "{app}\logs"
 
 [Code]
-// Warn the user when Bonjour is missing, because DNS-SD discovery silently
-// fails without it and that is the single most common setup problem.
+// Bonjour is a hard runtime requirement, not just a discovery nicety.
+//
+// The binaries import dnssd.dll via a `raw-dylib` link, and Windows resolves
+// file-backed imports before the process entry point runs. Without Bonjour
+// installed, every invocation therefore dies with 0xC0000135
+// (STATUS_DLL_NOT_FOUND / "dnssd.dll was not found") before any of our code,
+// config parsing or the `dnssd: false` setting can take effect. dnssd.dll
+// belongs to Apple and cannot be redistributed, so the installer cannot supply
+// it — the user has to install Bonjour themselves.
+function IsBonjourInstalled(): Boolean;
+begin
+  // mDNSResponder.exe is the Bonjour service; dnssd.dll sits beside it and is
+  // what the loader actually needs.
+  Result := FileExists(ExpandConstant('{commonpf32}\Bonjour\dnssd.dll')) or
+            FileExists(ExpandConstant('{commonpf}\Bonjour\dnssd.dll'));
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  BonjourPath: String;
+  Response: Integer;
 begin
   if CurStep = ssPostInstall then
   begin
-    BonjourPath := ExpandConstant('{commonpf32}\Bonjour\mDNSResponder.exe');
-    if not FileExists(BonjourPath) then
-      if MsgBox('Apple Bonjour was not detected on this system.' + #13#10 +
-                'Automatic printer discovery (DNS-SD) will not work without it.' + #13#10 + #13#10 +
-                'The tool can still be used by connecting to a fixed host and port.' + #13#10 + #13#10 +
-                'Continue anyway?', mbConfirmation, MB_YESNO) = IDNO then
-        MsgBox('Install Bonjour (for example via Bonjour Print Services) and run setup again.', mbInformation, MB_OK);
+    if not IsBonjourInstalled() then
+    begin
+      Response := MsgBox('Apple Bonjour was not detected on this system.' + #13#10 + #13#10 +
+                         'IPP Sharing requires Bonjour: Windows must find dnssd.dll before the program ' + #13#10 +
+                         'can start, so without it every command fails with "dnssd.dll was not found" ' + #13#10 +
+                         '(error 0xC0000135) — even when DNS-SD discovery is switched off.' + #13#10 + #13#10 +
+                         'Install Bonjour Print Services before using IPP Sharing.' + #13#10 + #13#10 +
+                         'Continue the installation anyway?', mbConfirmation, MB_YESNO);
+      if Response = IDNO then
+        MsgBox('Install Bonjour Print Services (https://support.apple.com/106390), then run this setup again.', mbInformation, MB_OK);
+    end;
   end;
 end;

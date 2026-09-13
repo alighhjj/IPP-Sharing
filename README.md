@@ -42,6 +42,11 @@ Before using IPP Sharing, ensure the following requirements are met:
 - **Operating System**: Windows 10 or later (required for Rust compatibility).
 - **Apple Bonjour**: Install Bonjour for service discovery. It is bundled with [iTunes](https://support.apple.com/en-us/HT210384) or [Bonjour Print Services](https://developer.apple.com/bonjour/). Alternatively, download it from [my Shared Files](https://files.alampy.com/Tools%C2%B7%E5%B7%A5%E5%85%B7/Bonjour).
 
+> [!IMPORTANT]
+> Bonjour is **not optional**. The binaries import `dnssd.dll`, the Bonjour DNS-SD library, through a `raw-dylib` link. Windows resolves that import before the program starts, so without Bonjour installed **every** IPP Sharing command fails immediately with exit code `-1073741515` (`0xC0000135`, `STATUS_DLL_NOT_FOUND`) — even when `dnssd: false` disables service discovery, and even for `ipp-sharing --version`.
+>
+> The error is `The code execution cannot proceed because dnssd.dll was not found.` Because `dnssd.dll` ships with Bonjour and cannot be redistributed, it is not part of the portable bundle or the installer; Bonjour must be installed separately.
+
 ### Step 1: Generate a Self-Signed Certificate
 To enable TLS encryption, generate a self-signed certificate using `openssl`. Here’s an example command:
 

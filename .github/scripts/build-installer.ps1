@@ -30,7 +30,8 @@ switch ($Target) {
 }
 
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$releaseDir = Join-Path $repoRoot "target/$Target/release"
+$targetDir = Join-Path $repoRoot "target/$Target"
+$releaseDir = Join-Path $targetDir "release"
 $bundleName = "IPP-Sharing-$Version-$arch"
 
 # -OutputDir may be absolute (the workflow passes one) or repo-relative.
@@ -63,21 +64,26 @@ foreach ($exe in @("ipp-sharing-gui.exe", "ipp-sharing.exe")) {
     Write-Host ("  + {0} ({1:N1} MB)" -f $exe, ((Get-Item $src).Length / 1MB))
 }
 
-# PDFium is linked as a dynamic library by winprint's `pdfium` feature, so the
-# executables fail to start with STATUS_DLL_NOT_FOUND unless pdfium.dll sits
-# next to them. Cargo drops it in the build script's OUT_DIR, whose path
-# contains a moving hash and version — hence the wildcard search.
-$pdfium = Get-ChildItem -Path (Join-Path $releaseDir "build") -Recurse `
-    -Filter "pdfium.dll" -File -ErrorAction SilentlyContinue |
-    Select-Object -First 1
-if ($pdfium) {
-    Copy-Item $pdfium.FullName $stage
-    Write-Host ("  + pdfium.dll ({0:N1} MB)" -f ($pdfium.Length / 1MB))
+# Stage the native DLLs cargo leaves in build-script OUT_DIRs. Without
+# pdfium.dll the executables fail to start with STATUS_DLL_NOT_FOUND.
+. (Join-Path $PSScriptRoot "native-deps.ps1")
+
+$deps = Get-NativeDependencyReport -ProfileDir $releaseDir
+
+if ($deps.PdfiumBundled) {
+    Copy-Item -LiteralPath $deps.PdfiumPath $stage
+    Write-Host ("  + pdfium.dll ({0:N1} MB)" -f ((Get-Item $deps.PdfiumPath).Length / 1MB))
 } else {
-    # Warn rather than fail: a build with --no-default-features --features
-    # winpdf does not need it.
-    Write-Warning "pdfium.dll not found under $releaseDir\build — PDF printing will not work in this bundle."
+    # Only legitimately absent when built with --no-default-features --features
+    # winpdf, which drops the PDFium dependency in favour of the Windows print
+    # stack. Any other build must produce it.
+    Write-Warning "pdfium.dll not found under $releaseDir\build — PDF printing will not work in this bundle. Expected only for winpdf builds."
 }
+
+# dnssd.dll is intentionally NOT bundled: it ships with Apple Bonjour and is
+# not redistributable. The executables nonetheless import it at startup, so
+# every user needs Bonjour installed. Record the requirement in the bundle.
+Write-Host "Note: dnssd.dll (Apple Bonjour) is a required runtime dependency and is not bundled."
 
 Copy-Item (Join-Path $repoRoot "README.md") $stage
 Copy-Item (Join-Path $repoRoot "LICENSE.md") $stage
@@ -85,10 +91,20 @@ Copy-Item (Join-Path $repoRoot "LICENSE.md") $stage
 $exampleConfig = Join-Path $repoRoot "config.example.yaml"
 if (Test-Path $exampleConfig) { Copy-Item $exampleConfig $stage }
 
-# Ship a per-bundle commit marker for traceability.
+# Ship a per-bundle commit marker for traceability, plus the non-obvious
+# runtime requirement so it travels with the files rather than only the README.
 $sha = if ($ShortSha) { $ShortSha } else { "unknown" }
-"IPP Sharing $Version ($arch)`nCommit: $sha`nBuilt: $(Get-Date -Format 'u')" |
-    Out-File -Encoding utf8 (Join-Path $stage "BUILD-INFO.txt")
+@(
+    "IPP Sharing $Version ($arch)"
+    "Commit: $sha"
+    "Built: $(Get-Date -Format 'u')"
+    ""
+    "Runtime requirement: Apple Bonjour must be installed."
+    "  The executables import dnssd.dll, which ships with Bonjour and cannot be"
+    "  redistributed. Windows resolves it before startup, so without Bonjour"
+    "  every command fails with 0xC0000135 (STATUS_DLL_NOT_FOUND)."
+    "  Install Bonjour Print Services: https://support.apple.com/106390"
+) | Out-File -Encoding utf8 (Join-Path $stage "BUILD-INFO.txt")
 
 # --- portable zip -------------------------------------------------------------
 $zipPath = Join-Path $outPath "$bundleName.zip"
