@@ -2623,6 +2623,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "ipp"
+version = "7.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9dac83d4cb04551421ba7ec91c5c618883d208086e2fcd4ef01561adb91be57b"
+dependencies = [
+ "bytes",
+ "enum-as-inner",
+ "enum-primitive-derive",
+ "futures-executor",
+ "futures-util",
+ "http",
+ "num-traits",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "ipp-sharing"
 version = "0.1.0"
 dependencies = [
@@ -2644,7 +2660,7 @@ dependencies = [
  "futures",
  "gethostname",
  "hyper",
- "ipp",
+ "ipp 7.0.0",
  "ippper",
  "log",
  "print_raster",
@@ -2691,7 +2707,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
- "ipp",
+ "ipp 6.0.1",
  "log",
  "moka",
  "num-traits",
