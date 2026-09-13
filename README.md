@@ -94,6 +94,31 @@ netsh advfirewall firewall add rule name="IPP Sharing (IPP)" dir=in action=allow
 netsh advfirewall firewall add rule name="IPP Sharing (Bonjour)" dir=in action=allow protocol=UDP localport=5353
 ```
 
+> If port 631 is already taken (Windows' own print stack sometimes holds it),
+> change `server.addr` in `config.yaml` to another port such as 1631 and open
+> that port instead.
+
+### GUI window closes immediately / stays blank
+
+The GUI needs a working GPU driver. On older Intel integrated graphics (Ivy
+Bridge and earlier, driver `10.18.x`) the OpenGL backend used by the default
+renderer fails and `wgpu` treats it as fatal, so the process exits before it can
+draw anything — the window flashes and disappears, and no error is logged.
+
+The GUI already prefers DX12/Vulkan and avoids that OpenGL backend, so on a
+current build this should not happen. If you still hit it, force a backend:
+
+```cmd
+set WGPU_BACKEND=dx12
+ipp-sharing-gui.exe
+```
+
+`WGPU_BACKEND` accepts `dx12`, `vulkan`, or `gl`. If neither DX12 nor Vulkan
+works, updating the graphics driver is the real fix.
+
+The CLI (`ipp-sharing.exe`) never creates a window and is unaffected — it is a
+usable fallback if the GUI cannot render on your hardware.
+
 ## Building from Source
 
 ```shell

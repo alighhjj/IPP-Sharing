@@ -2665,12 +2665,14 @@ dependencies = [
  "anyhow",
  "clap",
  "eframe",
+ "egui-wgpu",
  "egui_tracing",
  "humantime",
  "ipp-sharing-core",
  "log",
  "tokio",
  "tracing",
+ "wgpu",
 ]
 
 [[package]]

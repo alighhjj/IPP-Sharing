@@ -15,14 +15,18 @@ server:
   # resolve AND that is covered by the certificate, otherwise clients will
   # reject the TLS connection.
   # host: "my-pc.local:631"
-  tls:
-    # Generate a self-signed pair with:
-    #   openssl req -x509 -newkey rsa:4096 -keyout key.pem -out certificate.pem -days 365 -nodes
-    #
-    # Leave the whole `tls:` block out to serve plain HTTP on port 631.
-    # (Committing the `tls:` key with empty paths will start an HTTP server.)
-    cert: "D:/ipp-sharing/certificate.pem"
-    key: "D:/ipp-sharing/key.pem"
+
+  # TLS is OFF by default: the block below points at paths that do not exist
+  # until you create them, and enabling it unconditionally made the shipped
+  # installer's first run fail to start.
+  #
+  # To enable HTTPS, generate a self-signed pair:
+  #   openssl req -x509 -newkey rsa:4096 -keyout key.pem -out certificate.pem -days 365 -nodes
+  # then uncomment this block and point it at the real files.
+  #
+  # tls:
+  #   cert: "C:/ipp-sharing/certificate.pem"
+  #   key: "C:/ipp-sharing/key.pem"
 
 devices:
   - name: "Print To PDF (IppSharing)"

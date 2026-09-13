@@ -74,11 +74,24 @@ fn main() {
 
     runtime.spawn(async {
         if let Err(e) = app_main().await {
-            error!("Application error: {}", e);
+            // This used to be a bare `error!`, which made every startup failure
+            // invisible: the GUI is built with `windows_subsystem = "windows"`,
+            // so there is no console to print to, and the in-window log panel
+            // dies with the process. Users saw only a window that appeared and
+            // vanished. Surface the whole anyhow chain instead — the outer
+            // message alone ("failed to read config file …") hides the actual
+            // cause buried a few levels down.
+            let chain = e
+                .chain()
+                .map(|cause| cause.to_string())
+                .collect::<Vec<_>>()
+                .join("\n  → ");
+            error!("Application error: {chain}");
+            show_fatal_error(&chain);
         }
     });
     let icon = eframe::icon_data::from_png_bytes(include_bytes!("../../icons/app.png")).ok();
-    let options = eframe::NativeOptions {
+    let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_decorations(true)
             .with_maximized(true)
@@ -88,6 +101,7 @@ fn main() {
 
         ..Default::default()
     };
+    options.wgpu_options.wgpu_setup = preferred_wgpu_setup();
     eframe::run_native(
         "IPP Sharing",
         options,
@@ -100,6 +114,90 @@ fn main() {
     .unwrap();
 
     runtime.shutdown_timeout(Duration::from_secs(1));
+}
+
+/// Shows a modal message box carrying a startup error.
+///
+/// Declared by hand rather than pulling in the `windows` crate: this is the only
+/// Win32 call in the GUI crate, and `user32.dll` is loaded by every Windows GUI
+/// process anyway, so a dependency would be all cost and no benefit.
+///
+/// Deliberately blocking. A startup failure means the background task that keeps
+/// the process alive has already returned, so the message box must be shown
+/// before `main` unwinds — otherwise the window would disappear before the user
+/// could read anything.
+fn show_fatal_error(message: &str) {
+    // Not `MB_ICONERROR` alone: this fires when there is no usable renderer, and
+    // on those machines the dialog is the only thing that will ever appear.
+    const MB_OK: u32 = 0x0000_0000;
+    const MB_ICONERROR: u32 = 0x0000_0010;
+    const MB_SETFOREGROUND: u32 = 0x0001_0000;
+    const MB_TOPMOST: u32 = 0x0004_0000;
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn MessageBoxW(
+            hwnd: *mut core::ffi::c_void,
+            text: *const u16,
+            caption: *const u16,
+            utype: u32,
+        ) -> i32;
+    }
+
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    let text = wide(&format!(
+        "IPP Sharing could not start.\n\n{message}\n\n\
+         If the window flashed and closed with no message, the graphics driver \
+         may be too old; see the README for the WGPU_BACKEND workaround."
+    ));
+    let caption = wide("IPP Sharing");
+
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            text.as_ptr(),
+            caption.as_ptr(),
+            MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST,
+        );
+    }
+}
+
+/// Builds the wgpu setup, avoiding the OpenGL backend unless the user asks for
+/// it.
+///
+/// Why this is not the default: eframe ships `Backends::PRIMARY | Backends::GL`
+/// out of the box, and on Intel's legacy Windows GL driver (Ivy Bridge and
+/// earlier, driver 10.18.x) that GL backend does not merely lose a frame — wgpu
+/// reports `Instance::new: failed to create Vulkan backend` and then dies with
+/// "Handling wgpu errors as fatal by default". Because wgpu treats that class of
+/// error as fatal, the process is terminated, so the user sees the window flash
+/// and vanish with nothing on screen and nothing in any log.
+///
+/// Measured on an Intel HD Graphics 2500 (`10.18.10.4252`, OpenGL 4.0): the
+/// default backend set crashed on the first frame, forcing `WGPU_BACKEND=dx12`
+/// made it work with a software-rasterizer warning. DX12 has been part of
+/// `Backends::PRIMARY` since Windows 10, so we simply exclude GL and keep DX12
+/// and Vulkan in play.
+///
+/// `WGPU_BACKEND` still wins when it is set, so anyone who actually needs GL
+/// (a machine where DX12 is the broken one) can restore it with
+/// `set WGPU_BACKEND=gl`.
+fn preferred_wgpu_setup() -> egui_wgpu::WgpuSetup {
+    // `without_display_handle()` yields the normal eframe defaults, including
+    // `wgpu::Backends::from_env().unwrap_or(PRIMARY | GL)`. Keep every field
+    // except `backends` so we do not silently drop future upstream changes.
+    let mut setup = egui_wgpu::WgpuSetup::without_display_handle();
+
+    if std::env::var_os("WGPU_BACKEND").is_none() {
+        if let egui_wgpu::WgpuSetup::CreateNew(create_new) = &mut setup {
+            create_new.instance_descriptor.backends = wgpu::Backends::PRIMARY;
+        }
+    }
+
+    setup
 }
 
 fn setup_fonts(ctx: &egui::Context) {
