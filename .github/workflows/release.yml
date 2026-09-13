@@ -233,7 +233,11 @@ jobs:
 
           - Both bundles ship the GUI (\`ipp-sharing-gui.exe\`) and the CLI (\`ipp-sharing.exe\`).
           - A \`config.yaml\` next to the executable is required; see the README.
-          - Bonjour is needed for automatic printer discovery.
+          - **Apple Bonjour is required.** The executables import \`dnssd.dll\`, which
+            Windows resolves before startup, so without Bonjour every command fails
+            with \`0xC0000135\` ("dnssd.dll was not found"). Bonjour ships with
+            [Bonjour Print Services](https://support.apple.com/106390) and cannot be
+            redistributed, so it is not included in these downloads.
           - Installers are only code-signed when signing secrets are configured.
           EOF
 
