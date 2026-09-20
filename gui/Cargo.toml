@@ -14,7 +14,7 @@ eframe = "0.34"
 # Pinned to the versions eframe 0.34 itself depends on, so the `WgpuSetup` types
 # we touch in `preferred_wgpu_setup` are the exact ones eframe expects rather
 # than a second, incompatible copy of the same crate.
-egui-wgpu = "0.34"
+egui-wgpu = "0.35"
 wgpu = "29"
 egui_tracing = "0.3"
 tracing = { version = "0.1", default-features = false }
