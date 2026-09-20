@@ -15,7 +15,7 @@ eframe = "0.34"
 # we touch in `preferred_wgpu_setup` are the exact ones eframe expects rather
 # than a second, incompatible copy of the same crate.
 egui-wgpu = "0.34"
-wgpu = "29"
+wgpu = "30"
 egui_tracing = "0.3"
 tracing = { version = "0.1", default-features = false }
 humantime = "2.3.0"
